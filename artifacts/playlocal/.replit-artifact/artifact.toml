@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "PlayLocal"
+description = "A sports networking platform that helps people new to a city find nearby places, join or host games, form interest groups, and connect with serious players through verified skill profiles."
+version = "1.0.0"
+id = "artifacts/playlocal"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21264
+
+[services.development]
+run = "pnpm --filter @workspace/playlocal run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/playlocal", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/playlocal/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21264"
+BASE_PATH = "/"

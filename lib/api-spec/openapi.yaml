@@ -1,0 +1,384 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: places
+    description: Nearby sports places and venue details
+  - name: games
+    description: Games and player participation
+  - name: groups
+    description: Interest-based sports groups
+  - name: players
+    description: Player profiles and skill analysis
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /places:
+    get:
+      operationId: listPlaces
+      tags: [places]
+      summary: List nearby sports places
+      responses:
+        "200":
+          description: Nearby places
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Place"
+  /places/{placeId}:
+    get:
+      operationId: getPlace
+      tags: [places]
+      summary: Get a place with available games
+      parameters:
+        - $ref: "#/components/parameters/PlaceId"
+      responses:
+        "200":
+          description: Place details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaceDetails"
+        "404":
+          description: Place not found
+  /places/{placeId}/games:
+    get:
+      operationId: listPlaceGames
+      tags: [games]
+      summary: List open games at a place
+      parameters:
+        - $ref: "#/components/parameters/PlaceId"
+      responses:
+        "200":
+          description: Open games
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Game"
+  /games:
+    post:
+      operationId: createGame
+      tags: [games]
+      summary: Host a game
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GameInput"
+      responses:
+        "201":
+          description: Created game
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+  /games/{gameId}/join:
+    post:
+      operationId: joinGame
+      tags: [games]
+      summary: Join a game
+      parameters:
+        - $ref: "#/components/parameters/GameId"
+      responses:
+        "200":
+          description: Updated game
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Game"
+        "404":
+          description: Game not found
+        "409":
+          description: Game is full
+  /groups:
+    get:
+      operationId: listGroups
+      tags: [groups]
+      summary: List interest groups
+      responses:
+        "200":
+          description: Interest groups
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/InterestGroup"
+    post:
+      operationId: createGroup
+      tags: [groups]
+      summary: Create an interest group
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroupInput"
+      responses:
+        "201":
+          description: Created group
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InterestGroup"
+  /groups/{groupId}/join:
+    post:
+      operationId: joinGroup
+      tags: [groups]
+      summary: Join an interest group
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "200":
+          description: Updated group
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InterestGroup"
+  /players:
+    get:
+      operationId: listPlayers
+      tags: [players]
+      summary: List serious players
+      responses:
+        "200":
+          description: Player profiles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Player"
+  /profile:
+    get:
+      operationId: getProfile
+      tags: [players]
+      summary: Get the current profile
+      responses:
+        "200":
+          description: Current profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Player"
+    patch:
+      operationId: updateProfile
+      tags: [players]
+      summary: Update the current profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileUpdate"
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Player"
+  /profile/analyze:
+    post:
+      operationId: analyzeSkillVideo
+      tags: [players]
+      summary: Analyze a player skill video
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SkillVideoInput"
+      responses:
+        "200":
+          description: Short AI-generated skill summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SkillAnalysis"
+components:
+  parameters:
+    PlaceId:
+      name: placeId
+      in: path
+      required: true
+      schema:
+        type: string
+    GameId:
+      name: gameId
+      in: path
+      required: true
+      schema:
+        type: string
+    GroupId:
+      name: groupId
+      in: path
+      required: true
+      schema:
+        type: string
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    Place:
+      type: object
+      required: [id, name, sports, distance, address, latitude, longitude, accent]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        sports:
+          type: array
+          items: { type: string }
+        distance: { type: string }
+        address: { type: string }
+        latitude: { type: number }
+        longitude: { type: number }
+        accent: { type: string }
+    PlaceDetails:
+      allOf:
+        - $ref: "#/components/schemas/Place"
+        - type: object
+          required: [games]
+          properties:
+            games:
+              type: array
+              items:
+                $ref: "#/components/schemas/Game"
+    Game:
+      type: object
+      required: [id, placeId, placeName, sport, title, host, players, playerLimit, time, date, noFixedTime, skillLevel, joined]
+      properties:
+        id: { type: string }
+        placeId: { type: ["string", "null"] }
+        placeName: { type: string }
+        sport: { type: string }
+        title: { type: string }
+        host: { type: string }
+        players: { type: number }
+        playerLimit: { type: number }
+        time: { type: string }
+        date: { type: string }
+        noFixedTime: { type: boolean }
+        skillLevel: { type: string }
+        joined: { type: boolean }
+    GameInput:
+      type: object
+      required: [placeId, placeName, sport, title, playerLimit, date, time, noFixedTime, skillLevel]
+      properties:
+        placeId: { type: ["string", "null"] }
+        placeName: { type: string }
+        sport: { type: string }
+        title: { type: string }
+        playerLimit: { type: number, minimum: 2, maximum: 50 }
+        date: { type: string }
+        time: { type: string }
+        noFixedTime: { type: boolean }
+        skillLevel: { type: string }
+    InterestGroup:
+      type: object
+      required: [id, sport, name, description, members, memberLimit, location, timing, joined, host]
+      properties:
+        id: { type: string }
+        sport: { type: string }
+        name: { type: string }
+        description: { type: string }
+        members: { type: number }
+        memberLimit: { type: number }
+        location: { type: string }
+        timing: { type: string }
+        joined: { type: boolean }
+        host: { type: string }
+    GroupInput:
+      type: object
+      required: [sport, name, description, memberLimit]
+      properties:
+        sport: { type: string }
+        name: { type: string }
+        description: { type: string }
+        memberLimit: { type: number, minimum: 2, maximum: 50 }
+        location: { type: string }
+        timing: { type: string }
+    Player:
+      type: object
+      required: [id, name, avatar, city, sports, level, verified, bio, achievements, videos, lookingFor]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        avatar: { type: string }
+        city: { type: string }
+        sports:
+          type: array
+          items: { type: string }
+        level: { type: string }
+        verified: { type: boolean }
+        bio: { type: string }
+        achievements:
+          type: array
+          items: { type: string }
+        videos:
+          type: array
+          items: { type: string }
+        lookingFor: { type: string }
+    ProfileUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        avatar: { type: string }
+        city: { type: string }
+        bio: { type: string }
+        sports:
+          type: array
+          items: { type: string }
+        level: { type: string }
+        lookingFor: { type: string }
+        videos:
+          type: array
+          items: { type: string }
+    SkillVideoInput:
+      type: object
+      required: [filename, contentType, videoBase64]
+      properties:
+        filename: { type: string }
+        contentType: { type: string }
+        videoBase64: { type: string, description: Inline video data, limited to small clips }
+    SkillAnalysis:
+      type: object
+      required: [summary, strengths, focus, confidence]
+      properties:
+        summary: { type: string }
+        strengths:
+          type: array
+          items: { type: string }
+        focus:
+          type: array
+          items: { type: string }
+        confidence: { type: string }
+
