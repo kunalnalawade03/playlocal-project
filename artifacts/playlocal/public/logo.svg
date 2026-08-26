@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 52" role="img" aria-labelledby="title">
+  <title id="title">PlayLocal</title>
+  <rect width="52" height="52" rx="16" fill="#ffde59"/>
+  <path d="M29 10 16 29h9l-3 13 14-20h-9l2-12Z" fill="#16162d"/>
+  <text x="64" y="35" fill="#f7f5ef" font-family="DM Sans,Arial,sans-serif" font-size="26" font-weight="700">play<tspan fill="#ffde59">local</tspan></text>
+</svg>

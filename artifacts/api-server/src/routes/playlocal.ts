@@ -1,5 +1,5 @@
-import { Router, type IRouter } from "express";
-import { and, eq, lt, ne } from "drizzle-orm";
+import { Router, type IRouter, type RequestHandler } from "express";
+import { and, eq, inArray, lt, ne } from "drizzle-orm";
 import { getAuth } from "@clerk/express";
 import {
   AnalyzeSkillVideoBody,
@@ -13,6 +13,8 @@ import {
 import {
   db,
   gamesTable,
+  gameMembershipsTable,
+  groupMembershipsTable,
   groupsTable,
   placesTable,
   playersTable,
@@ -21,7 +23,17 @@ import {
 const router: IRouter = Router();
 
 const getUserId = (req: Parameters<Parameters<typeof router.get>[1]>[0]) =>
-  getAuth(req).userId || "me";
+  getAuth(req).userId;
+
+const requireUser: RequestHandler = (req, res, next) => {
+  const userId = getUserId(req);
+  if (!userId) {
+    res.status(401).json({ error: "Sign in to continue." });
+    return;
+  }
+  res.locals.userId = userId;
+  next();
+};
 
 async function getOrCreateProfile(userId: string) {
   const [existing] = await db.select().from(playersTable).where(eq(playersTable.id, userId));
@@ -38,8 +50,11 @@ async function getOrCreateProfile(userId: string) {
     achievements: [],
     videos: [],
     lookingFor: "Friendly games nearby",
-  }).returning();
-  return created;
+  }).onConflictDoNothing().returning();
+  if (created) return created;
+  const [concurrentProfile] = await db.select().from(playersTable).where(eq(playersTable.id, userId));
+  if (!concurrentProfile) throw new Error("Profile creation did not complete.");
+  return concurrentProfile;
 }
 
 const formatGameDate = (value: string) =>
@@ -61,7 +76,7 @@ const mapPlace = (place: typeof placesTable.$inferSelect) => ({
   accent: place.accent,
 });
 
-const mapGame = (game: typeof gamesTable.$inferSelect) => ({
+const mapGame = (game: typeof gamesTable.$inferSelect, joined = false) => ({
   id: game.id,
   placeId: game.placeId,
   placeName: game.placeName,
@@ -74,10 +89,10 @@ const mapGame = (game: typeof gamesTable.$inferSelect) => ({
   date: formatGameDate(game.gameDate),
   noFixedTime: game.noFixedTime,
   skillLevel: game.skillLevel,
-  joined: game.joined,
+  joined,
 });
 
-const mapGroup = (group: typeof groupsTable.$inferSelect) => ({
+const mapGroup = (group: typeof groupsTable.$inferSelect, joined = false) => ({
   id: group.id,
   sport: group.sport,
   name: group.name,
@@ -86,7 +101,7 @@ const mapGroup = (group: typeof groupsTable.$inferSelect) => ({
   memberLimit: group.memberLimit,
   location: group.location,
   timing: group.timing,
-  joined: group.joined,
+  joined,
   host: group.host,
 });
 
@@ -106,8 +121,9 @@ const mapPlayer = (player: typeof playersTable.$inferSelect) => ({
 
 router.get("/places", async (req, res, next) => {
   try {
-    const profile = await getOrCreateProfile(getUserId(req));
-    const places = profile.city
+    const userId = getUserId(req);
+    const profile = userId ? await getOrCreateProfile(userId) : null;
+    const places = profile?.city
       ? await db.select().from(placesTable).where(eq(placesTable.city, profile.city))
       : await db.select().from(placesTable);
     res.json(places.map(mapPlace));
@@ -125,7 +141,13 @@ router.get("/places/:placeId", async (req, res, next) => {
       return;
     }
     const games = await db.select().from(gamesTable).where(eq(gamesTable.placeId, placeId));
-    res.json({ ...mapPlace(place), games: games.map(mapGame) });
+    const userId = getUserId(req);
+    const memberships = userId && games.length
+      ? await db.select({ gameId: gameMembershipsTable.gameId }).from(gameMembershipsTable)
+          .where(and(eq(gameMembershipsTable.playerId, userId), inArray(gameMembershipsTable.gameId, games.map((game) => game.id))))
+      : [];
+    const joinedIds = new Set(memberships.map((membership) => membership.gameId));
+    res.json({ ...mapPlace(place), games: games.map((game) => mapGame(game, joinedIds.has(game.id))) });
   } catch (error) {
     next(error);
   }
@@ -135,20 +157,23 @@ router.get("/places/:placeId/games", async (req, res, next) => {
   try {
     const { placeId } = GetPlaceParams.parse(req.params);
     const games = await db.select().from(gamesTable).where(eq(gamesTable.placeId, placeId));
-    res.json(games.map(mapGame));
+    const userId = getUserId(req);
+    const memberships = userId && games.length
+      ? await db.select({ gameId: gameMembershipsTable.gameId }).from(gameMembershipsTable)
+          .where(and(eq(gameMembershipsTable.playerId, userId), inArray(gameMembershipsTable.gameId, games.map((game) => game.id))))
+      : [];
+    const joinedIds = new Set(memberships.map((membership) => membership.gameId));
+    res.json(games.map((game) => mapGame(game, joinedIds.has(game.id))));
   } catch (error) {
     next(error);
   }
 });
 
-router.post("/games", async (req, res, next) => {
+router.post("/games", requireUser, async (req, res, next) => {
   try {
     const input = CreateGameBody.parse(req.body);
-    const profile = await getOrCreateProfile(getUserId(req));
-    if (!profile) {
-      res.status(503).json({ error: "Profile setup is not ready yet." });
-      return;
-    }
+    const userId = res.locals.userId as string;
+    const profile = await getOrCreateProfile(userId);
 
     const [game] = await db
       .insert(gamesTable)
@@ -168,13 +193,14 @@ router.post("/games", async (req, res, next) => {
         joined: true,
       })
       .returning();
-    res.status(201).json(mapGame(game));
+    await db.insert(gameMembershipsTable).values({ gameId: game.id, playerId: userId });
+    res.status(201).json(mapGame(game, true));
   } catch (error) {
     next(error);
   }
 });
 
-router.post("/games/:gameId/join", async (req, res, next) => {
+router.post("/games/:gameId/join", requireUser, async (req, res, next) => {
   try {
     const { gameId } = JoinGameParams.parse(req.params);
     const [existing] = await db.select().from(gamesTable).where(eq(gamesTable.id, gameId));
@@ -182,20 +208,25 @@ router.post("/games/:gameId/join", async (req, res, next) => {
       res.status(404).json({ error: "Game not found" });
       return;
     }
-    if (existing.joined) {
-      res.json(mapGame(existing));
+    const userId = res.locals.userId as string;
+    await getOrCreateProfile(userId);
+    const [membership] = await db.select().from(gameMembershipsTable)
+      .where(and(eq(gameMembershipsTable.gameId, gameId), eq(gameMembershipsTable.playerId, userId)));
+    if (membership) {
+      res.json(mapGame(existing, true));
       return;
     }
     const [game] = await db
       .update(gamesTable)
-      .set({ players: existing.players + 1, joined: true, updatedAt: new Date() })
+      .set({ players: existing.players + 1, updatedAt: new Date() })
       .where(and(eq(gamesTable.id, gameId), lt(gamesTable.players, gamesTable.playerLimit)))
       .returning();
     if (!game) {
       res.status(409).json({ error: "This game is full" });
       return;
     }
-    res.json(mapGame(game));
+    await db.insert(gameMembershipsTable).values({ gameId, playerId: userId });
+    res.json(mapGame(game, true));
   } catch (error) {
     next(error);
   }
@@ -203,22 +234,27 @@ router.post("/games/:gameId/join", async (req, res, next) => {
 
 router.get("/groups", async (req, res, next) => {
   try {
-    const profile = await getOrCreateProfile(getUserId(req));
-    const groups = profile.city
-      ? (await db.select().from(groupsTable)).filter((group) =>
-          !group.location || group.location.toLowerCase().includes(profile.city.toLowerCase()),
-        )
+    const userId = getUserId(req);
+    const profile = userId ? await getOrCreateProfile(userId) : null;
+    const groups = profile?.city
+      ? await db.select().from(groupsTable).where(eq(groupsTable.city, profile.city))
       : await db.select().from(groupsTable);
-    res.json(groups.map(mapGroup));
+    const memberships = userId && groups.length
+      ? await db.select({ groupId: groupMembershipsTable.groupId }).from(groupMembershipsTable)
+          .where(and(eq(groupMembershipsTable.playerId, userId), inArray(groupMembershipsTable.groupId, groups.map((group) => group.id))))
+      : [];
+    const joinedIds = new Set(memberships.map((membership) => membership.groupId));
+    res.json(groups.map((group) => mapGroup(group, joinedIds.has(group.id))));
   } catch (error) {
     next(error);
   }
 });
 
-router.post("/groups", async (req, res, next) => {
+router.post("/groups", requireUser, async (req, res, next) => {
   try {
     const input = CreateGroupBody.parse(req.body);
-    const profile = await getOrCreateProfile(getUserId(req));
+    const userId = res.locals.userId as string;
+    const profile = await getOrCreateProfile(userId);
     const [group] = await db
       .insert(groupsTable)
       .values({
@@ -228,19 +264,21 @@ router.post("/groups", async (req, res, next) => {
         description: input.description,
         members: 1,
         memberLimit: input.memberLimit,
+        city: profile.city || "Bengaluru",
         location: input.location || "Location to decide together",
         timing: input.timing || "Flexible",
         joined: true,
         host: profile.name,
       })
       .returning();
-    res.status(201).json(mapGroup(group));
+    await db.insert(groupMembershipsTable).values({ groupId: group.id, playerId: userId });
+    res.status(201).json(mapGroup(group, true));
   } catch (error) {
     next(error);
   }
 });
 
-router.post("/groups/:groupId/join", async (req, res, next) => {
+router.post("/groups/:groupId/join", requireUser, async (req, res, next) => {
   try {
     const { groupId } = JoinGroupParams.parse(req.params);
     const [existing] = await db.select().from(groupsTable).where(eq(groupsTable.id, groupId));
@@ -248,20 +286,25 @@ router.post("/groups/:groupId/join", async (req, res, next) => {
       res.status(404).json({ error: "Group not found" });
       return;
     }
-    if (existing.joined) {
-      res.json(mapGroup(existing));
+    const userId = res.locals.userId as string;
+    await getOrCreateProfile(userId);
+    const [membership] = await db.select().from(groupMembershipsTable)
+      .where(and(eq(groupMembershipsTable.groupId, groupId), eq(groupMembershipsTable.playerId, userId)));
+    if (membership) {
+      res.json(mapGroup(existing, true));
       return;
     }
     const [group] = await db
       .update(groupsTable)
-      .set({ members: existing.members + 1, joined: true, updatedAt: new Date() })
+      .set({ members: existing.members + 1, updatedAt: new Date() })
       .where(and(eq(groupsTable.id, groupId), lt(groupsTable.members, groupsTable.memberLimit)))
       .returning();
     if (!group) {
       res.status(409).json({ error: "This group is full" });
       return;
     }
-    res.json(mapGroup(group));
+    await db.insert(groupMembershipsTable).values({ groupId, playerId: userId });
+    res.json(mapGroup(group, true));
   } catch (error) {
     next(error);
   }
@@ -270,32 +313,34 @@ router.post("/groups/:groupId/join", async (req, res, next) => {
 router.get("/players", async (req, res, next) => {
   try {
     const userId = getUserId(req);
-    const profile = await getOrCreateProfile(userId);
-    const players = profile.city
-      ? await db.select().from(playersTable).where(and(ne(playersTable.id, userId), eq(playersTable.city, profile.city)))
-      : await db.select().from(playersTable).where(ne(playersTable.id, userId));
+    const profile = userId ? await getOrCreateProfile(userId) : null;
+    const players = profile?.city
+      ? await db.select().from(playersTable).where(and(ne(playersTable.id, userId!), eq(playersTable.city, profile.city)))
+      : userId
+        ? await db.select().from(playersTable).where(ne(playersTable.id, userId))
+        : await db.select().from(playersTable).where(ne(playersTable.id, "me"));
     res.json(players.map(mapPlayer));
   } catch (error) {
     next(error);
   }
 });
 
-router.get("/profile", async (req, res, next) => {
+router.get("/profile", requireUser, async (req, res, next) => {
   try {
-    const profile = await getOrCreateProfile(getUserId(req));
+    const profile = await getOrCreateProfile(res.locals.userId as string);
     res.json(mapPlayer(profile));
   } catch (error) {
     next(error);
   }
 });
 
-router.patch("/profile", async (req, res, next) => {
+router.patch("/profile", requireUser, async (req, res, next) => {
   try {
     const input = UpdateProfileBody.parse(req.body);
     const [profile] = await db
       .update(playersTable)
       .set({ ...input, updatedAt: new Date() })
-      .where(eq(playersTable.id, getUserId(req)))
+      .where(eq(playersTable.id, res.locals.userId as string))
       .returning();
     if (!profile) {
       res.status(404).json({ error: "Profile not found" });
@@ -307,7 +352,7 @@ router.patch("/profile", async (req, res, next) => {
   }
 });
 
-router.post("/profile/analyze", async (req, res) => {
+router.post("/profile/analyze", requireUser, async (req, res) => {
   const input = AnalyzeSkillVideoBody.parse(req.body);
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {

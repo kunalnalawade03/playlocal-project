@@ -1,4 +1,4 @@
-import { boolean, date, integer, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, date, integer, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -44,6 +44,7 @@ export const groupsTable = pgTable("interest_groups", {
   description: text("description").notNull(),
   members: integer("members").notNull().default(1),
   memberLimit: integer("member_limit").notNull(),
+  city: text("city").notNull().default("Bengaluru"),
   location: text("location").notNull(),
   timing: text("timing").notNull(),
   joined: boolean("joined").notNull().default(false),
@@ -65,6 +66,18 @@ export const playersTable = pgTable("players", {
   lookingFor: text("looking_for").notNull(),
   ...timestamps,
 });
+
+export const gameMembershipsTable = pgTable("game_memberships", {
+  gameId: text("game_id").notNull().references(() => gamesTable.id, { onDelete: "cascade" }),
+  playerId: text("player_id").notNull().references(() => playersTable.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.gameId, table.playerId] })]);
+
+export const groupMembershipsTable = pgTable("group_memberships", {
+  groupId: text("group_id").notNull().references(() => groupsTable.id, { onDelete: "cascade" }),
+  playerId: text("player_id").notNull().references(() => playersTable.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [primaryKey({ columns: [table.groupId, table.playerId] })]);
 
 export const insertPlaceSchema = createInsertSchema(placesTable).omit({ createdAt: true, updatedAt: true });
 export const insertGameSchema = createInsertSchema(gamesTable).omit({ createdAt: true, updatedAt: true });

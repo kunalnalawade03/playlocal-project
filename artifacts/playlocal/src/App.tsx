@@ -1,6 +1,9 @@
-import { useMemo, useState, type FormEvent, type ReactNode, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type ChangeEvent } from 'react';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
-import { Link, Route, Router as WouterRouter, Switch, useLocation, useParams } from 'wouter';
+import { Link, Redirect, Route, Router as WouterRouter, Switch, useLocation, useParams } from 'wouter';
+import { ClerkProvider, Show, SignIn, SignUp, useClerk, useUser } from '@clerk/react';
+import { publishableKeyFromHost } from '@clerk/react/internal';
+import { shadcn } from '@clerk/themes';
 import {
   ArrowLeft, ArrowUpRight, Award, Check, ChevronRight, CircleHelp, Clock3,
   Compass, Crosshair, FileVideo, Filter,
@@ -21,6 +24,47 @@ import { useToast } from '@/hooks/use-toast';
 import NotFound from '@/pages/not-found';
 
 const queryClient = new QueryClient();
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
+const clerkPubKey = publishableKeyFromHost(window.location.hostname, import.meta.env.VITE_CLERK_PUBLISHABLE_KEY);
+const clerkProxyUrl = import.meta.env.VITE_CLERK_PROXY_URL;
+const stripBase = (path: string) => basePath && path.startsWith(basePath) ? path.slice(basePath.length) || '/' : path;
+const clerkAppearance = {
+  theme: shadcn,
+  cssLayerName: 'clerk',
+  options: {
+    logoPlacement: 'inside' as const,
+    logoLinkUrl: basePath || '/',
+    logoImageUrl: `${window.location.origin}${basePath}/logo.svg`,
+    socialButtonsPlacement: 'top' as const,
+  },
+  variables: {
+    colorPrimary: '#ffde59',
+    colorForeground: '#f7f5ef',
+    colorMutedForeground: '#9d9aaf',
+    colorDanger: '#ef6666',
+    colorBackground: '#16162d',
+    colorInput: '#20203b',
+    colorInputForeground: '#f7f5ef',
+    colorNeutral: '#403d5a',
+    fontFamily: 'DM Sans, sans-serif',
+    borderRadius: '0.9rem',
+  },
+  elements: {
+    rootBox: 'w-full flex justify-center',
+    cardBox: 'bg-[#16162d] rounded-3xl w-[440px] max-w-full overflow-hidden border border-[#403d5a]',
+    card: '!shadow-none !border-0 !bg-transparent !rounded-none',
+    footer: '!shadow-none !border-0 !bg-transparent !rounded-none',
+    headerTitle: 'text-[#f7f5ef] font-bold',
+    headerSubtitle: 'text-[#9d9aaf]',
+    socialButtonsBlockButtonText: 'text-[#f7f5ef]',
+    formFieldLabel: 'text-[#f7f5ef]',
+    footerActionLink: 'text-[#ffde59]',
+    footerActionText: 'text-[#9d9aaf]',
+    dividerText: 'text-[#9d9aaf]',
+    formButtonPrimary: 'bg-[#ffde59] text-[#16162d] hover:bg-[#ffe77e]',
+    formFieldInput: 'bg-[#20203b] text-[#f7f5ef] border-[#403d5a]',
+  },
+};
 
 const sports = ['All sports', 'Football', 'Cricket', 'Basketball', 'Tennis', 'Hockey', 'Kabaddi', 'Kho-Kho', 'Running', 'Climbing', 'Volleyball'];
 const initials = (name = 'PlayLocal') => name.split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase();
@@ -52,7 +96,9 @@ function QueryState({ loading, error, empty, children, retry }: { loading: boole
 function AppShell({ children }: { children: ReactNode }) {
   const [location] = useLocation();
   const [mobileMenu, setMobileMenu] = useState(false);
-  const { data: profile } = useGetProfile();
+  const { isSignedIn } = useUser();
+  const { signOut } = useClerk();
+  const { data: profile } = useGetProfile({ query: { enabled: Boolean(isSignedIn), queryKey: getGetProfileQueryKey() } });
   const nav = [
     { href: '/', label: 'Nearby', icon: Navigation },
     { href: '/groups', label: 'Groups', icon: Users },
@@ -73,11 +119,15 @@ function AppShell({ children }: { children: ReactNode }) {
           <div className="mb-3 flex items-center gap-2"><Sparkles size={14} className="text-primary" /><span className="font-mono-ui text-[10px] uppercase tracking-wider text-primary">Local note</span></div>
           <p className="text-sm leading-relaxed text-muted-foreground">The best games usually start with “want to join?”</p>
         </div>
-        <Link href="/profile" data-testid="link-profile-sidebar" className="flex items-center gap-3 rounded-xl p-2 hover:bg-white/5">
-          <Avatar name={profile?.name || 'Your profile'} src={profile?.avatar} size="sm" />
-          <div className="min-w-0"><div className="truncate text-sm font-semibold">{profile?.name || 'Your profile'}</div><div className="text-xs text-muted-foreground">{profile?.city || 'Set up your profile'}</div></div>
-          <ChevronRight size={15} className="ml-auto text-muted-foreground" />
-        </Link>
+        <Show when="signed-in">
+          <Link href="/profile" data-testid="link-profile-sidebar" className="flex items-center gap-3 rounded-xl p-2 hover:bg-white/5">
+            <Avatar name={profile?.name || 'Your profile'} src={profile?.avatar} size="sm" />
+            <div className="min-w-0"><div className="truncate text-sm font-semibold">{profile?.name || 'Your profile'}</div><div className="text-xs text-muted-foreground">{profile?.city || 'Set your city'}</div></div>
+            <ChevronRight size={15} className="ml-auto text-muted-foreground" />
+          </Link>
+          <button onClick={() => signOut({ redirectUrl: basePath || '/' })} className="mt-2 w-full rounded-xl px-3 py-2 text-left text-xs text-muted-foreground hover:bg-white/5 hover:text-foreground">Sign out</button>
+        </Show>
+        <Show when="signed-out"><Link href="/sign-in" className="flex items-center justify-center rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground">Sign in with Google</Link></Show>
       </div>
     </aside>
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border/70 bg-background/90 px-4 backdrop-blur lg:hidden">
@@ -133,12 +183,20 @@ function PlacePage() {
   const join = useJoinGame();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const handleJoin = (game: Game) => join.mutate({ gameId: game.id }, { onSuccess: () => { toast({ title: 'You are in.', description: `See you at ${game.placeName}.` }); qc.invalidateQueries({ queryKey: getListPlaceGamesQueryKey(placeId) }); qc.invalidateQueries({ queryKey: getGetPlaceQueryKey(placeId) }); }, onError: () => toast({ title: 'Could not join yet', description: 'Please try again.', variant: 'destructive' }) });
+  const { isSignedIn } = useUser();
+  const [, setLocation] = useLocation();
+  const handleJoin = (game: Game) => {
+    if (!isSignedIn) {
+      setLocation('/sign-in');
+      return;
+    }
+    join.mutate({ gameId: game.id }, { onSuccess: () => { toast({ title: 'You are in.', description: `See you at ${game.placeName}.` }); qc.invalidateQueries({ queryKey: getListPlaceGamesQueryKey(placeId) }); qc.invalidateQueries({ queryKey: getGetPlaceQueryKey(placeId) }); }, onError: () => toast({ title: 'Could not join yet', description: 'Please try again.', variant: 'destructive' }) });
+  };
   return <div className="mx-auto max-w-[1500px] px-5 py-6 lg:px-14 lg:py-10">
     <Link href="/" data-testid="link-back-nearby" className="mb-8 inline-flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground"><ArrowLeft size={16} />Back to nearby</Link>
     <QueryState loading={place.isLoading} error={place.error} retry={() => place.refetch()}><div className="grid gap-8 lg:grid-cols-[1.15fr_.85fr]">
       <div><div className="map-surface relative flex h-56 items-end overflow-hidden rounded-3xl border border-border p-6 sm:h-72"><div className="absolute left-[48%] top-[42%] pin-pulse rounded-full bg-primary p-3 text-primary-foreground"><MapPin size={22} fill="currentColor" /></div><div className="absolute inset-0 bg-gradient-to-t from-[#101028] via-transparent to-transparent" /><div className="relative"><div className="font-mono-ui text-[10px] uppercase tracking-[.2em] text-primary">{place.data?.distance} away</div><h1 className="mt-2 font-display text-3xl font-bold">{place.data?.name}</h1><p className="mt-1 flex items-center gap-1 text-sm text-muted-foreground"><MapPin size={14} />{place.data?.address}</p></div></div><div className="mt-5 flex flex-wrap gap-2">{place.data?.sports.map((sport) => <span key={sport} className="rounded-full bg-secondary px-3 py-1.5 text-xs font-semibold text-secondary-foreground">{sport}</span>)}</div><div className="mt-8 grid grid-cols-3 gap-2 rounded-2xl border border-border bg-card p-4"><div><div className="font-display text-xl font-bold">{games.data?.length || 0}</div><div className="text-xs text-muted-foreground">open games</div></div><div><div className="font-display text-xl font-bold">24/7</div><div className="text-xs text-muted-foreground">good energy</div></div><div><div className="font-display text-xl font-bold">near</div><div className="text-xs text-muted-foreground">your orbit</div></div></div></div>
-      <div><div className="mb-4 flex items-end justify-between"><div><div className="font-mono-ui text-[10px] uppercase tracking-[.2em] text-primary">Open invites</div><h2 className="mt-2 font-display text-2xl font-bold">Games happening here</h2></div><ActionButton onClick={() => setShowHost(true)} className="hidden sm:inline-flex" testId="button-host-game"><Plus size={16} />Host a game</ActionButton></div><div className="mb-4 sm:hidden"><ActionButton onClick={() => setShowHost(true)} className="w-full" testId="button-host-game-mobile"><Plus size={16} />Host a game</ActionButton></div><QueryState loading={games.isLoading} error={games.error} empty={!games.data?.length} retry={() => games.refetch()}><div className="space-y-3">{games.data?.map((game) => <GameCard key={game.id} game={game} onJoin={() => handleJoin(game)} joining={join.isPending} />)}</div></QueryState></div>
+      <div><div className="mb-4 flex items-end justify-between"><div><div className="font-mono-ui text-[10px] uppercase tracking-[.2em] text-primary">Open invites</div><h2 className="mt-2 font-display text-2xl font-bold">Games happening here</h2></div><ActionButton onClick={() => isSignedIn ? setShowHost(true) : setLocation('/sign-in')} className="hidden sm:inline-flex" testId="button-host-game"><Plus size={16} />Host a game</ActionButton></div><div className="mb-4 sm:hidden"><ActionButton onClick={() => isSignedIn ? setShowHost(true) : setLocation('/sign-in')} className="w-full" testId="button-host-game-mobile"><Plus size={16} />Host a game</ActionButton></div><QueryState loading={games.isLoading} error={games.error} empty={!games.data?.length} retry={() => games.refetch()}><div className="space-y-3">{games.data?.map((game) => <GameCard key={game.id} game={game} onJoin={() => handleJoin(game)} joining={join.isPending} />)}</div></QueryState></div>
     </div></QueryState>
     {showHost && <HostGameModal place={place.data} onClose={() => setShowHost(false)} />}
   </div>;
@@ -164,9 +222,17 @@ function GroupsPage() {
   const { toast } = useToast();
   const [sport, setSport] = useState('All sports');
   const [showCreate, setShowCreate] = useState(false);
+  const { isSignedIn } = useUser();
+  const [, setLocation] = useLocation();
   const list = (groups.data || []).filter((group) => sport === 'All sports' || group.sport === sport);
   const submit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const f = new FormData(event.currentTarget); const data: GroupInput = { sport: String(f.get('sport')), name: String(f.get('name')), description: String(f.get('description')), memberLimit: Number(f.get('memberLimit')), location: String(f.get('location')), timing: String(f.get('timing')) }; create.mutate({ data }, { onSuccess: () => { toast({ title: 'Group created', description: 'Your people can find it now.' }); qc.invalidateQueries({ queryKey: getListGroupsQueryKey() }); setShowCreate(false); }, onError: () => toast({ title: 'Could not create group', variant: 'destructive' }) }); };
-  const handleJoin = (group: InterestGroup) => join.mutate({ groupId: group.id }, { onSuccess: () => { toast({ title: `Welcome to ${group.name}` }); qc.invalidateQueries({ queryKey: getListGroupsQueryKey() }); }, onError: () => toast({ title: 'Could not join yet', variant: 'destructive' }) });
+  const handleJoin = (group: InterestGroup) => {
+    if (!isSignedIn) {
+      setLocation('/sign-in');
+      return;
+    }
+    join.mutate({ groupId: group.id }, { onSuccess: () => { toast({ title: `Welcome to ${group.name}` }); qc.invalidateQueries({ queryKey: getListGroupsQueryKey() }); }, onError: () => toast({ title: 'Could not join yet', variant: 'destructive' }) });
+  };
   return <div className="mx-auto max-w-[1300px] px-5 py-8 lg:px-14 lg:py-12"><div className="mb-8 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between"><div><div className="mb-3 flex items-center gap-2 font-mono-ui text-[10px] uppercase tracking-[.2em] text-primary"><Users size={13} />Interest groups</div><h1 className="font-display text-4xl font-bold tracking-tight sm:text-5xl">Find your kind<br /><span className="text-accent">of people.</span></h1><p className="mt-4 max-w-lg text-sm leading-relaxed text-muted-foreground">Sports that do not need a court booking. Small rituals, shared routes, familiar faces.</p></div><ActionButton onClick={() => setShowCreate(true)} testId="button-create-group"><Plus size={16} />Start a group</ActionButton></div><div className="mb-7 flex gap-2 overflow-auto pb-1">{sports.map((s) => <button key={s} onClick={() => setSport(s)} data-testid={`filter-group-${s.toLowerCase().replace(/\s/g, '-')}`} className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-semibold ${sport === s ? 'border-primary bg-primary text-primary-foreground' : 'border-border bg-card text-muted-foreground'}`}>{s}</button>)}</div><QueryState loading={groups.isLoading} error={groups.error} empty={!list.length} retry={() => groups.refetch()}><div className="grid gap-4 md:grid-cols-2">{list.map((group) => <div key={group.id} data-testid={`card-group-${group.id}`} className="rounded-2xl border border-border bg-card p-5 transition hover:border-accent/50"><div className="flex items-start justify-between"><span className="rounded-lg bg-accent/15 px-2.5 py-1.5 text-xs font-bold text-accent">{group.sport}</span><button onClick={() => toast({ title: group.name, description: `Hosted by ${group.host}.` })} data-testid={`button-more-group-${group.id}`} className="text-muted-foreground"><MoreHorizontal size={18} /></button></div><h2 className="mt-5 font-display text-xl font-bold">{group.name}</h2><p className="mt-2 min-h-10 text-sm leading-relaxed text-muted-foreground">{group.description}</p><div className="mt-5 space-y-2 text-xs text-muted-foreground"><span className="flex items-center gap-2"><MapPin size={14} className="text-accent" />{group.location || 'Local routes'}</span><span className="flex items-center gap-2"><Clock3 size={14} className="text-accent" />{group.timing || 'Timing shared in group'}</span></div><div className="mt-5 flex items-center justify-between border-t border-border pt-4"><span className="flex items-center gap-2 text-xs text-muted-foreground"><Avatar name={group.host} size="sm" /><span><strong className="text-foreground">{group.members}</strong> / {group.memberLimit} members</span></span><ActionButton onClick={() => handleJoin(group)} disabled={group.joined || join.isPending} variant={group.joined ? 'outline' : 'primary'} className="px-3 py-2" testId={`button-join-group-${group.id}`}>{group.joined ? <><Check size={14} />Joined</> : 'Join group'}</ActionButton></div></div>)}</div></QueryState>{showCreate && <div className="fixed inset-0 z-50 flex items-end justify-center bg-background/70 p-0 backdrop-blur-sm sm:items-center sm:p-4"><div className="w-full max-w-lg rounded-t-3xl border border-border bg-card p-6 sm:rounded-3xl"><div className="mb-6 flex justify-between"><div><div className="font-mono-ui text-[10px] uppercase tracking-[.2em] text-primary">Make a little room</div><h2 className="mt-2 font-display text-2xl font-bold">Start a group</h2></div><ActionButton variant="ghost" onClick={() => setShowCreate(false)} testId="button-close-group"><X size={18} /></ActionButton></div><form onSubmit={submit} className="grid gap-4"><label><span className="field-label">Group name</span><input required name="name" data-testid="input-group-name" placeholder="Sunday sunrise runners" className="field" /></label><div className="grid gap-4 sm:grid-cols-2"><label><span className="field-label">Sport</span><select name="sport" data-testid="select-group-sport" className="field">{sports.slice(1).map((s) => <option key={s}>{s}</option>)}</select></label><label><span className="field-label">Member limit</span><input name="memberLimit" type="number" min="2" max="50" defaultValue="12" data-testid="input-group-limit" className="field" /></label></div><label><span className="field-label">What is the vibe?</span><textarea required name="description" data-testid="input-group-description" placeholder="A low-pressure place to..." className="field min-h-20 resize-none" /></label><div className="grid gap-4 sm:grid-cols-2"><label><span className="field-label">Where</span><input name="location" data-testid="input-group-location" placeholder="Mission District" className="field" /></label><label><span className="field-label">When</span><input name="timing" data-testid="input-group-timing" placeholder="Sundays, 8am" className="field" /></label></div><ActionButton type="submit" disabled={create.isPending} testId="button-submit-group">{create.isPending ? 'Creating…' : 'Create group'}</ActionButton></form></div></div>}</div>;
 }
 
@@ -195,6 +261,8 @@ function ProfilePage() {
   const [analysis, setAnalysis] = useState<SkillAnalysis | null>(null);
   const [editing, setEditing] = useState(false);
   const current = profile.data;
+  const { user } = useUser();
+  useEffect(() => { if (current && !current.city) setEditing(true); }, [current]);
   const submit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const f = new FormData(event.currentTarget); const data = { name: String(f.get('name')), city: String(f.get('city')), bio: String(f.get('bio')), level: String(f.get('level')), lookingFor: String(f.get('lookingFor')), sports: String(f.get('sports')).split(',').map((s) => s.trim()).filter(Boolean), ...(avatar ? { avatar } : {}) }; update.mutate({ data }, { onSuccess: () => { toast({ title: 'Profile saved', description: 'Your local signal is looking good.' }); qc.invalidateQueries({ queryKey: getGetProfileQueryKey() }); setEditing(false); }, onError: () => toast({ title: 'Could not save profile', variant: 'destructive' }) }); };
   const handleAvatar = (event: ChangeEvent<HTMLInputElement>) => { const file = event.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => setAvatar(String(reader.result)); reader.readAsDataURL(file); };
   const handleAchievementImage = (event: ChangeEvent<HTMLInputElement>) => { const file = event.target.files?.[0]; if (!file) return; if (file.size > 5 * 1024 * 1024) { toast({ title: 'That image is too large', description: 'Please choose an image under 5 MB.', variant: 'destructive' }); return; } const reader = new FileReader(); reader.onload = () => setAchievementImage(String(reader.result)); reader.readAsDataURL(file); };
@@ -206,6 +274,24 @@ function ProfilePage() {
 function PlayIcon() { return <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/15 text-accent"><ArrowUpRight size={13} /></span>; }
 function AnalysisCard({ analysis }: { analysis: SkillAnalysis }) { return <div data-testid="card-skill-analysis" className="mt-6 rounded-2xl border border-primary/20 bg-primary/5 p-5"><div className="flex items-center justify-between"><span className="font-mono-ui text-[10px] uppercase tracking-wider text-primary">Your read</span><span className="rounded-full bg-primary/15 px-2 py-1 text-[10px] font-bold text-primary">{analysis.confidence} confidence</span></div><p className="mt-3 text-sm leading-relaxed">{analysis.summary}</p><div className="mt-4 grid gap-4 sm:grid-cols-2"><div><div className="mb-2 text-xs font-bold text-primary">Strengths</div>{analysis.strengths.map((s) => <div key={s} className="mb-1 flex gap-2 text-xs text-muted-foreground"><Check size={13} className="shrink-0 text-primary" />{s}</div>)}</div><div><div className="mb-2 text-xs font-bold text-accent">Focus next</div>{analysis.focus.map((s) => <div key={s} className="mb-1 flex gap-2 text-xs text-muted-foreground"><Target size={13} className="shrink-0 text-accent" />{s}</div>)}</div></div></div>; }
 
-function Router() { return <AppShell><ErrorBoundary><Switch><Route path="/" component={HomePage} /><Route path="/places/:placeId" component={PlacePage} /><Route path="/groups" component={GroupsPage} /><Route path="/players" component={PlayersPage} /><Route path="/profile" component={ProfilePage} /><Route component={NotFound} /></Switch></ErrorBoundary></AppShell>; }
-function App() { return <QueryClientProvider client={queryClient}><TooltipProvider><WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}><Router /></WouterRouter><Toaster /></TooltipProvider></QueryClientProvider>; }
+function SignInPage() { return <div className="app-noise flex min-h-[100dvh] items-center justify-center bg-background px-4"><SignIn routing="path" path={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`} /></div>; }
+function SignUpPage() { return <div className="app-noise flex min-h-[100dvh] items-center justify-center bg-background px-4"><SignUp routing="path" path={`${basePath}/sign-up`} signInUrl={`${basePath}/sign-in`} /></div>; }
+function ProtectedProfilePage() { const { isLoaded, isSignedIn } = useUser(); if (!isLoaded) return null; return isSignedIn ? <ProfilePage /> : <Redirect to="/sign-in" />; }
+function MainRouter() { return <AppShell><ErrorBoundary><Switch><Route path="/" component={HomePage} /><Route path="/places/:placeId" component={PlacePage} /><Route path="/groups" component={GroupsPage} /><Route path="/players" component={PlayersPage} /><Route path="/profile" component={ProtectedProfilePage} /><Route component={NotFound} /></Switch></ErrorBoundary></AppShell>; }
+function Router() { return <Switch><Route path="/sign-in/*?" component={SignInPage} /><Route path="/sign-up/*?" component={SignUpPage} /><Route component={MainRouter} /></Switch>; }
+function ClerkQueryClientCacheInvalidator() {
+  const { addListener } = useClerk();
+  const previousUserId = useRef<string | null | undefined>(undefined);
+  useEffect(() => addListener(({ user }) => {
+    const userId = user?.id ?? null;
+    if (previousUserId.current !== undefined && previousUserId.current !== userId) queryClient.clear();
+    previousUserId.current = userId;
+  }), [addListener]);
+  return null;
+}
+function ClerkProviderWithRoutes() {
+  const [, setLocation] = useLocation();
+  return <ClerkProvider publishableKey={clerkPubKey} proxyUrl={clerkProxyUrl} appearance={clerkAppearance} signInUrl={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`} localization={{ signIn: { start: { title: 'Welcome back', subtitle: 'Sign in to find games and people nearby' } }, signUp: { start: { title: 'Join PlayLocal', subtitle: 'Create your local player profile' } } }} routerPush={(to) => setLocation(stripBase(to))} routerReplace={(to) => setLocation(stripBase(to), { replace: true })}><QueryClientProvider client={queryClient}><ClerkQueryClientCacheInvalidator /><TooltipProvider><Router /><Toaster /></TooltipProvider></QueryClientProvider></ClerkProvider>;
+}
+function App() { return <WouterRouter base={basePath}><ClerkProviderWithRoutes /></WouterRouter>; }
 export default App;
